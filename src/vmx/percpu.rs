@@ -64,20 +64,21 @@ impl<H: AxVCpuHal> AxArchPerCpu for VmxPerCpuState<H> {
         }
 
         // Check control registers are in a VMX-friendly state. (SDM Vol. 3C, Appendix A.7, A.8)
-        macro_rules! cr_is_valid {
-            ($value: expr, $crx: ident) => {{
-                use Msr::*;
-                let value = $value;
-                let fixed0 = concat_idents!(IA32_VMX_, $crx, _FIXED0).read();
-                let fixed1 = concat_idents!(IA32_VMX_, $crx, _FIXED1).read();
-                (!fixed0 | value != 0) && (fixed1 | !value != 0)
-            }};
-        }
-        if !cr_is_valid!(Cr0::read().bits(), CR0) {
-            return ax_err!(BadState, "host CR0 is not valid in VMX operation");
-        }
-        if !cr_is_valid!(Cr4::read().bits(), CR4) {
-            return ax_err!(BadState, "host CR4 is not valid in VMX operation");
+        {
+            use Msr::*;
+            let cr0_value = Cr0::read().bits();
+            let cr0_fixed0 = IA32_VMX_CR0_FIXED0.read();
+            let cr0_fixed1 = IA32_VMX_CR0_FIXED1.read();
+            if !((!cr0_fixed0 | cr0_value) != 0 && (cr0_fixed1 | !cr0_value) != 0) {
+                return ax_err!(BadState, "host CR0 is not valid in VMX operation");
+            }
+
+            let cr4_value = Cr4::read().bits();
+            let cr4_fixed0 = IA32_VMX_CR4_FIXED0.read();
+            let cr4_fixed1 = IA32_VMX_CR4_FIXED1.read();
+            if !((!cr4_fixed0 | cr4_value) != 0 && (cr4_fixed1 | !cr4_value) != 0) {
+                return ax_err!(BadState, "host CR4 is not valid in VMX operation");
+            }
         }
 
         // Get VMCS revision identifier in IA32_VMX_BASIC MSR.

@@ -32,7 +32,7 @@ use super::vmcs::{
     self, ApicAccessExitType, VmcsControl32, VmcsControl64, VmcsControlNW, VmcsGuest16,
     VmcsGuest32, VmcsGuest64, VmcsGuestNW, VmcsHost16, VmcsHost32, VmcsHost64, VmcsHostNW,
 };
-use crate::{ept::GuestPageWalkInfo, msr::Msr, regs::GeneralRegisters, vmx::vcpu};
+use crate::{ept::GuestPageWalkInfo, msr::Msr, regs::GeneralRegisters};
 
 const VMX_PREEMPTION_TIMER_SET_VALUE: u32 = 1_000_000;
 
@@ -626,10 +626,12 @@ impl<H: AxVCpuHal> VmxVcpu<H> {
                 use VmcsGuest16::*;
                 use VmcsGuest32::*;
                 use VmcsGuestNW::*;
-                concat_idents!($seg, _SELECTOR).write(0)?;
-                concat_idents!($seg, _BASE).write(0)?;
-                concat_idents!($seg, _LIMIT).write(0xffff)?;
-                concat_idents!($seg, _ACCESS_RIGHTS).write($access_rights)?;
+                paste::paste! {
+                    [<$seg _SELECTOR>].write(0)?;
+                    [<$seg _BASE>].write(0)?;
+                    [<$seg _LIMIT>].write(0xffff)?;
+                    [<$seg _ACCESS_RIGHTS>].write($access_rights)?;
+                }
             }};
         }
 
@@ -874,24 +876,22 @@ impl<H: AxVCpuHal> VmxVcpu<H> {
 /// Get ready then vmlaunch or vmresume.
 macro_rules! vmx_entry_with {
     ($instr:literal) => {
-        unsafe {
-            naked_asm!(
-                save_regs_to_stack!(),                  // save host status
-                "mov    [rdi + {host_stack_size}], rsp", // save current RSP to Vcpu::host_stack_top
-                "mov    rsp, rdi",                      // set RSP to guest regs area
-                restore_regs_from_stack!(),             // restore guest status
-                $instr,                                 // let's go!
-                "jmp    {failed}",
-                host_stack_size = const size_of::<GeneralRegisters>(),
-                failed = sym Self::vmx_entry_failed,
-                // options(noreturn),
-            )
-        }
+        naked_asm!(
+            save_regs_to_stack!(),                  // save host status
+            "mov    [rdi + {host_stack_size}], rsp", // save current RSP to Vcpu::host_stack_top
+            "mov    rsp, rdi",                      // set RSP to guest regs area
+            restore_regs_from_stack!(),             // restore guest status
+            $instr,                                 // let's go!
+            "jmp    {failed}",
+            host_stack_size = const size_of::<GeneralRegisters>(),
+            failed = sym Self::vmx_entry_failed,
+            // options(noreturn),
+        )
     }
 }
 
 impl<H: AxVCpuHal> VmxVcpu<H> {
-    #[naked]
+    #[unsafe(naked)]
     /// Enter guest with vmlaunch.
     ///
     /// `#[naked]` is essential here, without it the rust compiler will think `&mut self` is not used and won't give us correct %rdi.
@@ -903,7 +903,7 @@ impl<H: AxVCpuHal> VmxVcpu<H> {
         vmx_entry_with!("vmlaunch")
     }
 
-    #[naked]
+    #[unsafe(naked)]
     /// Enter guest with vmresume.
     ///
     /// See [`Self::vmx_launch`] for detail.
@@ -911,22 +911,20 @@ impl<H: AxVCpuHal> VmxVcpu<H> {
         vmx_entry_with!("vmresume")
     }
 
-    #[naked]
+    #[unsafe(naked)]
     /// Return after vm-exit. This function is used only for returning from [`Self::vmx_launch`] or [`Self::vmx_resume`].
     ///
     /// NEVER call this function directly.
     ///
     /// The return value is a dummy value.
     unsafe extern "C" fn vmx_exit(&mut self) -> usize {
-        unsafe {
-            naked_asm!(
-                save_regs_to_stack!(),                  // save guest status, after this, rsp points to the `VmxVcpu`
-                "mov    rsp, [rsp + {host_stack_top}]", // set RSP to Vcpu::host_stack_top
-                restore_regs_from_stack!(),             // restore host status
-                "ret",
-                host_stack_top = const size_of::<GeneralRegisters>(),
-            );
-        }
+        naked_asm!(
+            save_regs_to_stack!(),                  // save guest status, after this, rsp points to the `VmxVcpu`
+            "mov    rsp, [rsp + {host_stack_top}]", // set RSP to Vcpu::host_stack_top
+            restore_regs_from_stack!(),             // restore host status
+            "ret",
+            host_stack_top = const size_of::<GeneralRegisters>(),
+        );
     }
 
     fn vmx_entry_failed() -> ! {
@@ -1041,7 +1039,7 @@ impl<H: AxVCpuHal> VmxVcpu<H> {
     fn handle_apic_access(&mut self, exit_info: &VmxExitInfo) -> AxResult {
         let apic_access_exit_info = self.apic_access_exit_info()?;
 
-        let write = match apic_access_exit_info.access_type {
+        let _write = match apic_access_exit_info.access_type {
             ApicAccessExitType::LinearDataWrite => true,
             ApicAccessExitType::LinearDataRead => false,
             _ => {
